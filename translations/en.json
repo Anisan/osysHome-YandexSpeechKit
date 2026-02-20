@@ -1,0 +1,18 @@
+{
+  "API version": "API version",
+  "Are you sure you want to delete all cached voice files?": "Are you sure you want to delete all cached voice files?",
+  "Clear cache": "Clear cache",
+  "Clear cache when changing voice to resynthesize phrases": "Clear cache when changing voice to resynthesize phrases",
+  "Connection": "Connection",
+  "Deleting...": "Deleting...",
+  "Enter key from Yandex Cloud console": "Enter key from Yandex Cloud console",
+  "Error loading preview": "Error loading preview",
+  "Files deleted": "Files deleted",
+  "Intonation": "Intonation",
+  "Key can be obtained in Yandex Cloud console": "Key can be obtained in Yandex Cloud console",
+  "Listen": "Listen",
+  "Please enter API key": "Please enter API key",
+  "Voice": "Voice",
+  "Voice and intonation": "Voice and intonation",
+  "Yandex SpeechKit": "Yandex SpeechKit"
+}

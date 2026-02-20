@@ -1,0 +1,18 @@
+{
+  "API version": "Версия API",
+  "Are you sure you want to delete all cached voice files?": "Вы уверены, что хотите удалить все кэшированные голосовые файлы?",
+  "Clear cache": "Очистить кэш",
+  "Clear cache when changing voice to resynthesize phrases": "Очистка кэша нужна после смены голоса, чтобы фразы заново синтезировались",
+  "Connection": "Подключение",
+  "Deleting...": "Удаление...",
+  "Enter key from Yandex Cloud console": "Введите ключ из консоли Yandex Cloud",
+  "Error loading preview": "Ошибка загрузки превью",
+  "Files deleted": "Удалено файлов",
+  "Intonation": "Интонация",
+  "Key can be obtained in Yandex Cloud console": "Ключ можно получить в консоли Yandex Cloud",
+  "Listen": "Прослушать",
+  "Please enter API key": "Пожалуйста, введите API-ключ",
+  "Voice": "Голос",
+  "Voice and intonation": "Голос и интонация",
+  "Yandex SpeechKit": "Yandex SpeechKit"
+}

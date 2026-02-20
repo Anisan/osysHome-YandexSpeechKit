@@ -1,0 +1,272 @@
+{% extends "layouts/module_admin.html" %}
+{% block breadcrumb %}
+<li class="breadcrumb-item"><a href="YandexSpeechKit">{{ _('Yandex SpeechKit') }}</a></li>
+{% endblock %}
+{% block module %}
+<div class="row justify-content-center">
+    <div class="col-12 col-lg-8 col-xl-6">
+        <form method="POST">
+            {{ form.hidden_tag() }}
+
+            <div class="card mb-3">
+                <div class="card-header py-2">
+                    <h6 class="mb-0"><i class="fas fa-key me-2 text-muted"></i>{{ _('Connection') }}</h6>
+                </div>
+                <div class="card-body">
+                    <div class="mb-0">
+                        <label for="access_key_field" class="form-label">{{ _('API key') }}</label>
+                        <input type="text" name="access_key" id="access_key_field" class="form-control"
+                               value="{{ form.access_key.data or '' }}" placeholder="{{ _('Enter key from Yandex Cloud console') }}" required>
+                        <div class="form-text">{{ _('Key can be obtained in Yandex Cloud console') }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-3">
+                <div class="card-header py-2">
+                    <h6 class="mb-0"><i class="fas fa-microphone me-2 text-muted"></i>{{ _('Voice and intonation') }}</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-12 col-md-4">
+                            <label for="api_version_field" class="form-label">{{ _('API version') }}</label>
+                            <select name="api_version" id="api_version_field" class="form-select">
+                                <option value="v1" {% if form.api_version.data == 'v1' %}selected{% endif %}>v1</option>
+                                <option value="v3" {% if form.api_version.data == 'v3' %}selected{% endif %}>v3</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label for="speaker_field" class="form-label">{{ _('Voice') }}</label>
+                            <select name="speaker" id="speaker_field" class="form-select">
+                            {% for value, label in form.speaker.choices %}
+                                <option value="{{ value }}" {% if form.speaker.data == value %}selected{% endif %}
+                                    data-v1-supported="{{ 'true' if value in v1_voices else 'false' }}"
+                                    data-emotions="{{ voice_emotions.get(value, ['neutral'])|join(',') }}">
+                                    {{ _(label) }}
+                                </option>
+                            {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label for="emotion_field" class="form-label">{{ _('Intonation') }}</label>
+                            <select name="emotion" id="emotion_field" class="form-select">
+                            {% for value, label in form.emotion.choices %}
+                                <option value="{{ value }}" {% if form.emotion.data == value %}selected{% endif %}>{{ _(label) }}</option>
+                            {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mt-3 d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-outline-primary" id="preview_btn">
+                            <i id="preview_icon" class="fas fa-volume-up me-1"></i>
+                            <span id="preview_btn_text">{{ _('Listen') }}</span>
+                            <i id="preview_spinner" class="fas fa-spinner fa-spin ms-1" style="display: none;"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-3">
+                <div class="card-header py-2">
+                    <h6 class="mb-0"><i class="fas fa-database me-2 text-muted"></i>{{ _('Cache') }}</h6>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-2">{{ _('Clear cache when changing voice to resynthesize phrases') }}</p>
+                    <button type="button" class="btn btn-outline-warning" id="clear_cache_btn">
+                        <i id="clear_cache_icon" class="fas fa-broom me-1"></i>
+                        <span id="clear_cache_btn_text">{{ _('Clear cache') }}</span>
+                        <i id="clear_cache_spinner" class="fas fa-spinner fa-spin ms-1" style="display: none;"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-end">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save me-1"></i>{{ _('Save') }}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+const YSK_I18N = {
+    errEnterApiKey: {{ _('Please enter API key') | tojson }},
+    errPreview: {{ _('Error loading preview') | tojson }},
+    errUnknown: {{ _('Unknown error') | tojson }},
+    confirmClearCache: {{ _('Are you sure you want to delete all cached voice files?') | tojson }},
+    loading: {{ _('Loading...') | tojson }},
+    deleting: {{ _('Deleting...') | tojson }},
+    listen: {{ _('Listen') | tojson }},
+    clearCache: {{ _('Clear cache') | tojson }},
+    filesDeleted: {{ _('Files deleted') | tojson }},
+};
+</script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const apiVersionSelect = document.getElementById('api_version_field');
+    const speakerSelect = document.getElementById('speaker_field');
+    const emotionSelect = document.getElementById('emotion_field');
+    
+    // Сохраняем все опции для восстановления
+    const allSpeakerOptions = Array.from(speakerSelect.options).map(opt => ({
+        value: opt.value,
+        label: opt.text,
+        v1Supported: opt.dataset.v1Supported === 'true',
+        emotions: (opt.dataset.emotions || 'neutral').split(',')
+    }));
+    const allEmotionOptions = Array.from(emotionSelect.options).map(opt => ({
+        value: opt.value,
+        label: opt.text
+    }));
+    
+    function filterSpeakerOptions() {
+        const apiVersion = apiVersionSelect.value;
+        const currentSpeaker = speakerSelect.value;
+        
+        const visible = apiVersion === 'v1'
+            ? allSpeakerOptions.filter(o => o.v1Supported)
+            : allSpeakerOptions;
+        
+        speakerSelect.innerHTML = '';
+        const currentInVisible = visible.some(o => o.value === currentSpeaker);
+        const speakerToSelect = currentInVisible ? currentSpeaker : (visible[0]?.value || 'marina');
+        
+        visible.forEach(opt => {
+            const option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt.label;
+            option.dataset.emotions = opt.emotions.join(',');
+            if (opt.value === speakerToSelect) option.selected = true;
+            speakerSelect.appendChild(option);
+        });
+        
+        filterEmotionOptions();
+    }
+    
+    function filterEmotionOptions() {
+        const selectedOpt = speakerSelect.options[speakerSelect.selectedIndex];
+        const allowedEmotions = selectedOpt ? (selectedOpt.dataset.emotions || 'neutral').split(',') : ['neutral'];
+        const currentEmotion = emotionSelect.value;
+        
+        const visible = allEmotionOptions.filter(o => allowedEmotions.includes(o.value));
+        const currentInVisible = visible.some(o => o.value === currentEmotion);
+        const emotionToSelect = currentInVisible ? currentEmotion : (visible[0]?.value || 'neutral');
+        
+        emotionSelect.innerHTML = '';
+        visible.forEach(opt => {
+            const option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt.label;
+            if (opt.value === emotionToSelect) option.selected = true;
+            emotionSelect.appendChild(option);
+        });
+    }
+    
+    apiVersionSelect.addEventListener('change', filterSpeakerOptions);
+    speakerSelect.addEventListener('change', filterEmotionOptions);
+    
+    filterSpeakerOptions();
+    
+    const previewBtn = document.getElementById('preview_btn');
+    const previewBtnText = document.getElementById('preview_btn_text');
+    const previewSpinner = document.getElementById('preview_spinner');
+    
+    const clearCacheBtn = document.getElementById('clear_cache_btn');
+    const clearCacheBtnText = document.getElementById('clear_cache_btn_text');
+    const clearCacheSpinner = document.getElementById('clear_cache_spinner');
+    
+    // Preview voice
+    previewBtn.addEventListener('click', async function() {
+        const accessKey = document.getElementById('access_key_field').value;
+        const apiVersion = document.getElementById('api_version_field').value;
+        const speaker = document.getElementById('speaker_field').value;
+        const emotion = document.getElementById('emotion_field').value;
+        
+        if (!accessKey) {
+            alert(YSK_I18N.errEnterApiKey);
+            return;
+        }
+        
+        previewBtn.disabled = true;
+        previewBtnText.textContent = YSK_I18N.loading;
+        document.getElementById('preview_icon').style.display = 'none';
+        previewSpinner.style.display = 'inline-block';
+        
+        try {
+            const response = await fetch(window.location.pathname, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    action: 'preview',
+                    access_key: accessKey,
+                    api_version: apiVersion,
+                    speaker: speaker,
+                    emotion: emotion
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                const audio = new Audio('data:audio/mp3;base64,' + data.audio);
+                audio.play();
+            } else {
+                alert(YSK_I18N.errPreview + ': ' + (data.error || YSK_I18N.errUnknown));
+            }
+        } catch (error) {
+            console.error('Preview error:', error);
+            alert(YSK_I18N.errPreview + ': ' + error.message);
+        } finally {
+            previewBtn.disabled = false;
+            previewBtnText.textContent = YSK_I18N.listen;
+            document.getElementById('preview_icon').style.display = '';
+            previewSpinner.style.display = 'none';
+        }
+    });
+    
+    // Clear cache
+    clearCacheBtn.addEventListener('click', async function() {
+        if (!confirm(YSK_I18N.confirmClearCache)) {
+            return;
+        }
+        
+        clearCacheBtn.disabled = true;
+        clearCacheBtnText.textContent = YSK_I18N.deleting;
+        document.getElementById('clear_cache_icon').style.display = 'none';
+        clearCacheSpinner.style.display = 'inline-block';
+        
+        try {
+            const response = await fetch(window.location.pathname, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    action: 'clear_cache'
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                alert(YSK_I18N.filesDeleted + ': ' + (data.count || 0));
+            } else {
+                alert(YSK_I18N.errPreview + ': ' + (data.error || YSK_I18N.errUnknown));
+            }
+        } catch (error) {
+            console.error('Clear cache error:', error);
+            alert(YSK_I18N.errPreview + ': ' + error.message);
+        } finally {
+            clearCacheBtn.disabled = false;
+            clearCacheBtnText.textContent = YSK_I18N.clearCache;
+            document.getElementById('clear_cache_icon').style.display = '';
+            clearCacheSpinner.style.display = 'none';
+        }
+    });
+});
+</script>
+{% endblock %}
