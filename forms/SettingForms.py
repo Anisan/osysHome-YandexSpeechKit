@@ -1,6 +1,6 @@
 from flask_wtf import FlaskForm
-from wtforms import StringField, SubmitField, SelectField
-from wtforms.validators import DataRequired
+from wtforms import StringField, SubmitField, SelectField, IntegerField
+from wtforms.validators import DataRequired, Optional, NumberRange
 
 # Голоса для ru-RU по https://yandex.cloud/ru/docs/speechkit/tts/voices
 # v1,v3: alena, filipp, ermil, jane, omazh, zahar, marina, madi_ru
@@ -68,4 +68,5 @@ class SettingsForm(FlaskForm):
     api_version = SelectField('API Version', validators=[DataRequired()], choices=[('v1', 'API v1'), ('v3', 'API v3')])
     speaker = SelectField('Speaker', validators=[DataRequired()], choices=SPEAKER_CHOICES)
     emotion = SelectField('Emotion', validators=[DataRequired()], choices=EMOTION_CHOICES)
+    default_volume = IntegerField('Default volume', validators=[Optional(), NumberRange(min=0, max=100)])
     submit = SubmitField('Submit')

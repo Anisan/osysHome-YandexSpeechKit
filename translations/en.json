@@ -41,5 +41,14 @@
   "yulduz_ru (F)": "yulduz_ru (F)",
   "zamira_ru (F)": "zamira_ru (F)",
   "zahar (M)": "zahar (M)",
-  "zhanar_ru (F)": "zhanar_ru (F)"
+  "zhanar_ru (F)": "zhanar_ru (F)",
+  "Add interval": "Add interval",
+  "Level intervals": "Level intervals",
+  "Level intervals hint": "For each level range from say you can set skip voicing or override intonation and volume. If level is outside any interval, default settings are used.",
+  "Max level": "Max level",
+  "Min level": "Min level",
+  "Skip voicing": "Skip voicing",
+  "Volume": "Volume",
+  "Default volume": "Default volume",
+  "Default volume hint": "0–100%, empty — API default. Used with v3."
 }

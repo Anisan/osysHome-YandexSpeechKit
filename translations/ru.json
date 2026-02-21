@@ -41,5 +41,14 @@
   "yulduz_ru (F)": "yulduz_ru (Ж)",
   "zamira_ru (F)": "zamira_ru (Ж)",
   "zahar (M)": "zahar (М)",
-  "zhanar_ru (F)": "zhanar_ru (Ж)"
+  "zhanar_ru (F)": "zhanar_ru (Ж)",
+  "Add interval": "Добавить интервал",
+  "Level intervals": "Интервалы уровней",
+  "Level intervals hint": "Для каждого диапазона level из say можно задать пропуск озвучивания или переопределить интонацию и громкость. Если level не попадает в интервал — используются стандартные настройки.",
+  "Max level": "Макс. уровень",
+  "Min level": "Мин. уровень",
+  "Skip voicing": "Пропустить озвучивание",
+  "Volume": "Громкость",
+  "Default volume": "Громкость",
+  "Default volume hint": "0–100%, пусто — уровень API. Применяется при v3."
 }

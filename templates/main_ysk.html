@@ -28,14 +28,14 @@
                 </div>
                 <div class="card-body">
                     <div class="row g-3">
-                        <div class="col-12 col-md-4">
+                        <div class="col-12 col-md-3">
                             <label for="api_version_field" class="form-label">{{ _('API version') }}</label>
                             <select name="api_version" id="api_version_field" class="form-select">
                                 <option value="v1" {% if form.api_version.data == 'v1' %}selected{% endif %}>v1</option>
                                 <option value="v3" {% if form.api_version.data == 'v3' %}selected{% endif %}>v3</option>
                             </select>
                         </div>
-                        <div class="col-12 col-md-4">
+                        <div class="col-12 col-md-3">
                             <label for="speaker_field" class="form-label">{{ _('Voice') }}</label>
                             <select name="speaker" id="speaker_field" class="form-select">
                             {% for value, label in form.speaker.choices %}
@@ -47,13 +47,19 @@
                             {% endfor %}
                             </select>
                         </div>
-                        <div class="col-12 col-md-4">
+                        <div class="col-12 col-md-3">
                             <label for="emotion_field" class="form-label">{{ _('Intonation') }}</label>
                             <select name="emotion" id="emotion_field" class="form-select">
                             {% for value, label in form.emotion.choices %}
                                 <option value="{{ value }}" {% if form.emotion.data == value %}selected{% endif %}>{{ _(label) }}</option>
                             {% endfor %}
                             </select>
+                        </div>
+                        <div class="col-12 col-md-3">
+                            <label for="default_volume_field" class="form-label">{{ _('Default volume') }}</label>
+                            <input type="number" name="default_volume" id="default_volume_field" class="form-control"
+                                   value="{{ form.default_volume.data|default('', true) }}"
+                                   min="0" max="100" placeholder="100" title="{{ _('Default volume hint') }}">
                         </div>
                     </div>
                     <div class="mt-3 d-flex flex-wrap gap-2">
@@ -63,6 +69,34 @@
                             <i id="preview_spinner" class="fas fa-spinner fa-spin ms-1" style="display: none;"></i>
                         </button>
                     </div>
+                </div>
+            </div>
+
+            <div class="card mb-3">
+                <div class="card-header py-2">
+                    <h6 class="mb-0"><i class="fas fa-layer-group me-2 text-muted"></i>{{ _('Level intervals') }}</h6>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-2">{{ _('Level intervals hint') }}</p>
+                    <input type="hidden" name="level_intervals_json" id="level_intervals_json" value="">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered" id="level_intervals_table">
+                            <thead>
+                                <tr>
+                                    <th>{{ _('Min level') }}</th>
+                                    <th>{{ _('Max level') }}</th>
+                                    <th>{{ _('Skip voicing') }}</th>
+                                    <th>{{ _('Intonation') }}</th>
+                                    <th>{{ _('Volume') }} %</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="level_intervals_body"></tbody>
+                        </table>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="add_level_interval_btn">
+                        <i class="fas fa-plus me-1"></i>{{ _('Add interval') }}
+                    </button>
                 </div>
             </div>
 
@@ -101,6 +135,9 @@ const YSK_I18N = {
     clearCache: {{ _('Clear cache') | tojson }},
     filesDeleted: {{ _('Files deleted') | tojson }},
 };
+const YSK_EMOTION_CHOICES = {{ form.emotion.choices | tojson }};
+const YSK_VOICE_EMOTIONS = {{ voice_emotions | tojson }};
+const YSK_LEVEL_INTERVALS = {{ level_intervals | tojson }};
 </script>
 
 <script>
@@ -164,11 +201,95 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    apiVersionSelect.addEventListener('change', filterSpeakerOptions);
-    speakerSelect.addEventListener('change', filterEmotionOptions);
+    apiVersionSelect.addEventListener('change', function() {
+        filterSpeakerOptions();
+        if (typeof filterIntervalEmotions === 'function') filterIntervalEmotions();
+    });
+    speakerSelect.addEventListener('change', () => { filterEmotionOptions(); filterIntervalEmotions(); });
     
     filterSpeakerOptions();
-    
+
+    // Level intervals
+    const levelIntervalsBody = document.getElementById('level_intervals_body');
+    const levelIntervalsJson = document.getElementById('level_intervals_json');
+
+    function getAllowedEmotionsForSpeaker() {
+        const speaker = speakerSelect.value;
+        return (YSK_VOICE_EMOTIONS[speaker] || ['neutral']).slice();
+    }
+
+    function emotionOptionsHtml(allowedEmotions) {
+        const allowed = allowedEmotions || getAllowedEmotionsForSpeaker();
+        return YSK_EMOTION_CHOICES
+            .filter(c => allowed.includes(c[0]))
+            .map(c => `<option value="${c[0]}">${c[1]}</option>`)
+            .join('');
+    }
+
+    function filterIntervalEmotions() {
+        const allowed = getAllowedEmotionsForSpeaker();
+        levelIntervalsBody.querySelectorAll('tr .interval-emotion').forEach(sel => {
+            const currentVal = sel.value;
+            sel.innerHTML = emotionOptionsHtml(allowed);
+            const hasVal = Array.from(sel.options).some(o => o.value === currentVal);
+            sel.value = hasVal ? currentVal : (allowed[0] || 'neutral');
+        });
+    }
+
+    function addIntervalRow(data) {
+        data = data || { min: 0, max: 10, skip: false, emotion: '', volume: '' };
+        const allowed = getAllowedEmotionsForSpeaker();
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><input type="number" class="form-control form-control-sm interval-min" value="${data.min}" min="0" step="1" style="width:5em"></td>
+            <td><input type="number" class="form-control form-control-sm interval-max" value="${data.max}" min="0" step="1" style="width:5em"></td>
+            <td><input type="checkbox" class="form-check-input interval-skip" ${data.skip ? 'checked' : ''}></td>
+            <td><select class="form-select form-select-sm interval-emotion" style="width:auto">${emotionOptionsHtml(allowed)}</select></td>
+            <td><input type="number" class="form-control form-control-sm interval-volume" value="${data.volume === '' || data.volume === null ? '' : data.volume}" min="0" max="100" placeholder="100" style="width:5em"></td>
+            <td><button type="button" class="btn btn-sm btn-outline-danger py-0 interval-remove"><i class="fas fa-times"></i></button></td>
+        `;
+        const sel = tr.querySelector('.interval-emotion');
+        const validEmotion = allowed.includes(data.emotion) ? data.emotion : (allowed[0] || 'neutral');
+        if (validEmotion) sel.value = validEmotion;
+        tr.querySelector('.interval-remove').addEventListener('click', () => { tr.remove(); syncIntervalsToJson(); });
+        tr.querySelector('.interval-skip').addEventListener('change', () => { toggleIntervalRow(tr); syncIntervalsToJson(); });
+        tr.querySelectorAll('.interval-min, .interval-max, .interval-emotion, .interval-volume').forEach(el => {
+            el.addEventListener('change', syncIntervalsToJson);
+            el.addEventListener('input', syncIntervalsToJson);
+        });
+        levelIntervalsBody.appendChild(tr);
+        toggleIntervalRow(tr);
+        syncIntervalsToJson();
+    }
+
+    function toggleIntervalRow(tr) {
+        const skip = tr.querySelector('.interval-skip').checked;
+        tr.querySelector('.interval-emotion').disabled = skip;
+        tr.querySelector('.interval-volume').disabled = skip;
+    }
+
+    function syncIntervalsToJson() {
+        const rows = levelIntervalsBody.querySelectorAll('tr');
+        const arr = [];
+        rows.forEach(tr => {
+            const min = parseInt(tr.querySelector('.interval-min').value, 10);
+            const max = parseInt(tr.querySelector('.interval-max').value, 10);
+            if (isNaN(min) || isNaN(max)) return;
+            const skip = tr.querySelector('.interval-skip').checked;
+            const emotion = tr.querySelector('.interval-emotion').value || null;
+            const volVal = tr.querySelector('.interval-volume').value;
+            const volume = (volVal === '' || volVal === null) ? null : parseInt(volVal, 10);
+            arr.push({ min, max, skip, emotion: skip ? null : emotion, volume: skip ? null : volume });
+        });
+        levelIntervalsJson.value = JSON.stringify(arr);
+    }
+
+    YSK_LEVEL_INTERVALS.forEach(iv => addIntervalRow(iv));
+    filterIntervalEmotions();
+    document.getElementById('add_level_interval_btn').addEventListener('click', () => addIntervalRow({ min: 0, max: 10, skip: false, emotion: 'neutral', volume: '' }));
+
+    document.querySelector('form').addEventListener('submit', syncIntervalsToJson);
+
     const previewBtn = document.getElementById('preview_btn');
     const previewBtnText = document.getElementById('preview_btn_text');
     const previewSpinner = document.getElementById('preview_spinner');
@@ -183,6 +304,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const apiVersion = document.getElementById('api_version_field').value;
         const speaker = document.getElementById('speaker_field').value;
         const emotion = document.getElementById('emotion_field').value;
+        const volEl = document.getElementById('default_volume_field');
+        const defaultVolume = volEl && volEl.value !== '' ? parseInt(volEl.value, 10) : null;
         
         if (!accessKey) {
             alert(YSK_I18N.errEnterApiKey);
@@ -195,18 +318,21 @@ document.addEventListener('DOMContentLoaded', function() {
         previewSpinner.style.display = 'inline-block';
         
         try {
+            const body = {
+                action: 'preview',
+                access_key: accessKey,
+                api_version: apiVersion,
+                speaker: speaker,
+                emotion: emotion
+            };
+            if (defaultVolume != null && !isNaN(defaultVolume)) body.default_volume = defaultVolume;
+            
             const response = await fetch(window.location.pathname, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    action: 'preview',
-                    access_key: accessKey,
-                    api_version: apiVersion,
-                    speaker: speaker,
-                    emotion: emotion
-                })
+                body: JSON.stringify(body)
             });
             
             const data = await response.json();
