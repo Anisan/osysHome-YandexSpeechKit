@@ -50,5 +50,7 @@
   "Skip voicing": "Пропустить озвучивание",
   "Volume": "Громкость",
   "Default volume": "Громкость",
-  "Default volume hint": "0–100%, пусто — уровень API. Применяется при v3."
+  "Default volume hint": "0–100%, пусто — уровень API. Применяется при v3.",
+  "Cache info": "Кэш",
+  "files": "файлов"
 }

@@ -50,5 +50,7 @@
   "Skip voicing": "Skip voicing",
   "Volume": "Volume",
   "Default volume": "Default volume",
-  "Default volume hint": "0–100%, empty — API default. Used with v3."
+  "Default volume hint": "0–100%, empty — API default. Used with v3.",
+  "Cache info": "Cache",
+  "files": "files"
 }

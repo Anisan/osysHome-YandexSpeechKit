@@ -1,6 +1,7 @@
 import os
 import base64
 import requests
+from app.configuration import Config
 import hashlib
 import shutil
 import json
@@ -57,13 +58,18 @@ class YandexSpeechKit(BasePlugin):
                     self.logger.exception(f"Preview error: {e}")
                     return jsonify({'success': False, 'error': str(e)}), 500
             
+            # Cache stats
+            elif data.get('action') == 'cache_stats':
+                return jsonify({'success': True, **self.get_voice_cache_stats()})
             # Clear cache
             elif data.get('action') == 'clear_cache':
                 try:
                     deleted_count = self.clear_voice_cache()
+                    stats = self.get_voice_cache_stats()
                     return jsonify({
                         'success': True,
-                        'count': deleted_count
+                        'count': deleted_count,
+                        **stats
                     })
                 except Exception as e:
                     self.logger.exception(f"Clear cache error: {e}")
@@ -96,6 +102,7 @@ class YandexSpeechKit(BasePlugin):
             "v1_voices": V1_VOICES,
             "voice_emotions": VOICE_EMOTIONS,
             "level_intervals": self.config.get("level_intervals") or [],
+            "cache_stats": self.get_voice_cache_stats(),
         }
         return self.render('main_ysk.html', content)
 
@@ -133,7 +140,7 @@ class YandexSpeechKit(BasePlugin):
             'format': 'mp3',
         }
 
-        with requests.post(url, headers=headers, data=data, stream=True) as resp:
+        with requests.post(url, headers=headers, data=data, stream=True, timeout=Config.HTTP_REQUEST_TIMEOUT) as resp:
             if resp.status_code != 200:
                 raise RuntimeError("Invalid response received: code: %d, message: %s" % (resp.status_code, resp.text))
 
@@ -166,7 +173,7 @@ class YandexSpeechKit(BasePlugin):
             "loudnessNormalizationType": "LUFS"
         }
 
-        resp = requests.post(url, headers=headers, json=payload)
+        resp = requests.post(url, headers=headers, json=payload, timeout=Config.HTTP_REQUEST_TIMEOUT)
         if resp.status_code != 200:
             raise RuntimeError("Invalid response received: code: %d, message: %s" % (resp.status_code, resp.text))
 
@@ -204,7 +211,7 @@ class YandexSpeechKit(BasePlugin):
                 "loudnessNormalizationType": "LUFS"
             }
 
-            resp = requests.post(url, headers=headers, json=payload)
+            resp = requests.post(url, headers=headers, json=payload, timeout=Config.HTTP_REQUEST_TIMEOUT)
             if resp.status_code != 200:
                 raise RuntimeError("Invalid response received: code: %d, message: %s" % (resp.status_code, resp.text))
 
@@ -230,7 +237,7 @@ class YandexSpeechKit(BasePlugin):
                 'format': 'mp3',
             }
 
-            resp = requests.post(url, headers=headers, data=data)
+            resp = requests.post(url, headers=headers, data=data, timeout=Config.HTTP_REQUEST_TIMEOUT)
         
         if resp.status_code != 200:
             raise RuntimeError("Invalid response received: code: %d, message: %s" % (resp.status_code, resp.text))
@@ -239,25 +246,49 @@ class YandexSpeechKit(BasePlugin):
         audio_base64 = base64.b64encode(resp.content).decode('utf-8')
         return audio_base64
     
+    def get_voice_cache_stats(self):
+        """Return count and total size of all files in module cache (recursive)."""
+        cache_dir = os.path.join(getCacheDir(), self.name)
+        count = 0
+        total = 0
+        if os.path.exists(cache_dir):
+            for root, dirs, files in os.walk(cache_dir):
+                for f in files:
+                    try:
+                        path = os.path.join(root, f)
+                        total += os.path.getsize(path)
+                        count += 1
+                    except OSError:
+                        pass
+        size_human = "0 B"
+        if total > 0:
+            for unit in ('B', 'KB', 'MB', 'GB'):
+                if total < 1024:
+                    size_human = f"{total:.1f} {unit}" if unit != 'B' else f"{total} B"
+                    break
+                total /= 1024
+            else:
+                size_human = f"{total:.1f} TB"
+        return {"count": count, "size_human": size_human}
+
     def clear_voice_cache(self):
-        """Clear all cached voice files for this plugin"""
+        """Clear all cached files for this module (recursive)."""
         cache_dir = os.path.join(getCacheDir(), self.name)
         deleted_count = 0
-        
         if os.path.exists(cache_dir):
-            # Count and delete all mp3 files
-            for root, dirs, files in os.walk(cache_dir):
-                for file in files:
-                    if file.endswith('.mp3'):
-                        try:
-                            file_path = os.path.join(root, file)
-                            os.remove(file_path)
-                            deleted_count += 1
-                        except Exception as e:
-                            self.logger.error(f"Error deleting {file}: {e}")
-            
-            self.logger.info(f"Cleared {deleted_count} cached voice files")
-        
+            for root, dirs, files in os.walk(cache_dir, topdown=False):
+                for f in files:
+                    try:
+                        os.remove(os.path.join(root, f))
+                        deleted_count += 1
+                    except Exception as e:
+                        self.logger.error(f"Error deleting {f}: {e}")
+                for d in dirs:
+                    try:
+                        os.rmdir(os.path.join(root, d))
+                    except OSError:
+                        pass
+            self.logger.info(f"Cleared {deleted_count} cached files")
         return deleted_count
 
     def _get_level_interval(self, level):
