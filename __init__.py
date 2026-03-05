@@ -25,12 +25,13 @@ class YandexSpeechKit(BasePlugin):
         pass
 
     def admin(self, request):
-        # Handle preview request
+        # Handle preview and cache JSON requests
         if request.method == 'POST' and request.is_json:
-            data = request.get_json()
-            
+            data = request.get_json() or {}
+            action = data.get('action')
+
             # Preview voice
-            if data.get('action') == 'preview':
+            if action == 'preview':
                 try:
                     access_key = data.get('access_key')
                     api_version = data.get('api_version', 'v1')
@@ -42,14 +43,14 @@ class YandexSpeechKit(BasePlugin):
                             volume = int(volume)
                         except (TypeError, ValueError):
                             volume = None
-                    
+
                     if not access_key:
                         return jsonify({'success': False, 'error': 'Access key is required'}), 400
-                    
+
                     # Generate preview audio
                     preview_text = "Привет! Это пример голоса."
                     audio_data = self.synthesize_preview(preview_text, access_key, speaker, emotion, api_version, volume)
-                    
+
                     return jsonify({
                         'success': True,
                         'audio': audio_data
@@ -57,12 +58,68 @@ class YandexSpeechKit(BasePlugin):
                 except Exception as e:
                     self.logger.exception(f"Preview error: {e}")
                     return jsonify({'success': False, 'error': str(e)}), 500
-            
+
             # Cache stats
-            elif data.get('action') == 'cache_stats':
+            elif action == 'cache_stats':
                 return jsonify({'success': True, **self.get_voice_cache_stats()})
+
+            # List cache items
+            elif action == 'cache_list':
+                try:
+                    items = self.list_voice_cache()
+                    return jsonify({'success': True, 'items': items, **self.get_voice_cache_stats()})
+                except Exception as e:
+                    self.logger.exception(f"Cache list error: {e}")
+                    return jsonify({'success': False, 'error': str(e)}), 500
+
+            # Get single cache file audio (base64)
+            elif action == 'cache_get':
+                try:
+                    filename = (data.get('filename') or '').strip()
+                    if not filename:
+                        return jsonify({'success': False, 'error': 'Filename is required'}), 400
+                    audio_b64 = self.get_cached_audio_base64(filename)
+                    if audio_b64 is None:
+                        return jsonify({'success': False, 'error': 'File not found'}), 404
+                    meta = self.get_cached_audio_meta(filename) or {}
+                    return jsonify({'success': True, 'audio': audio_b64, 'text': meta.get("text")})
+                except Exception as e:
+                    self.logger.exception(f"Cache get error: {e}")
+                    return jsonify({'success': False, 'error': str(e)}), 500
+
+            # Add phrase to cache manually
+            elif action == 'cache_add':
+                try:
+                    text = (data.get('text') or '').strip()
+                    if not text:
+                        return jsonify({'success': False, 'error': 'Text is required'}), 400
+                    # Optional: allow overriding voice/emotion/volume in the future
+                    self.add_phrase_to_cache(text)
+                    stats = self.get_voice_cache_stats()
+                    return jsonify({'success': True, **stats})
+                except Exception as e:
+                    self.logger.exception(f"Cache add error: {e}")
+                    return jsonify({'success': False, 'error': str(e)}), 500
+
+            # Delete single cache file
+            elif action == 'cache_delete':
+                try:
+                    filename = (data.get('filename') or '').strip()
+                    if not filename:
+                        return jsonify({'success': False, 'error': 'Filename is required'}), 400
+                    deleted = self.delete_voice_cache_file(filename)
+                    stats = self.get_voice_cache_stats()
+                    return jsonify({
+                        'success': True,
+                        'deleted': bool(deleted),
+                        **stats,
+                    })
+                except Exception as e:
+                    self.logger.exception(f"Cache delete error: {e}")
+                    return jsonify({'success': False, 'error': str(e)}), 500
+
             # Clear cache
-            elif data.get('action') == 'clear_cache':
+            elif action == 'clear_cache':
                 try:
                     deleted_count = self.clear_voice_cache()
                     stats = self.get_voice_cache_stats()
@@ -271,6 +328,142 @@ class YandexSpeechKit(BasePlugin):
                 size_human = f"{total:.1f} TB"
         return {"count": count, "size_human": size_human}
 
+    def list_voice_cache(self):
+        """
+        Return detailed list of cached files for this module.
+        Items are sorted by modification time (newest first).
+        """
+        cache_dir = os.path.join(getCacheDir(), self.name)
+        items = []
+        if not os.path.exists(cache_dir):
+            return items
+
+        for root, dirs, files in os.walk(cache_dir):
+            for f in files:
+                if not f.lower().endswith(".mp3"):
+                    continue
+                try:
+                    full_path = os.path.join(root, f)
+                    rel_path = os.path.relpath(full_path, cache_dir)
+                    stat = os.stat(full_path)
+                    meta = self._read_cache_meta_for_audio_file(full_path)
+                    items.append({
+                        "filename": rel_path.replace("\\", "/"),
+                        "size": stat.st_size,
+                        "mtime": int(stat.st_mtime),
+                        "text": (meta or {}).get("text"),
+                    })
+                except OSError:
+                    continue
+
+        # newest first
+        items.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+        return items
+
+    def _get_cache_index_path(self, cache_dir: str) -> str:
+        return os.path.join(cache_dir, "index.json")
+
+    def _load_cache_index(self, cache_dir: str):
+        """
+        Load shared index.json with metadata for cached files.
+        Returns dict[rel_path] -> meta.
+        """
+        index_path = self._get_cache_index_path(cache_dir)
+        if not os.path.exists(index_path):
+            return {}
+        try:
+            with open(index_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return {}
+            # Normalize windows separators in keys (backward compatible)
+            normalized = {}
+            changed = False
+            for k, v in data.items():
+                nk = k.replace("\\", "/") if isinstance(k, str) else k
+                if nk != k:
+                    changed = True
+                normalized[nk] = v
+            if changed:
+                # best-effort: persist normalized index
+                try:
+                    self._save_cache_index(cache_dir, normalized)
+                except Exception:
+                    pass
+            return normalized
+        except Exception:
+            return {}
+
+    def _save_cache_index(self, cache_dir: str, index: dict):
+        """
+        Save shared index.json. Best-effort.
+        """
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            index_path = self._get_cache_index_path(cache_dir)
+            with open(index_path, "w", encoding="utf-8") as f:
+                json.dump(index, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _get_cache_index_key_for_audio_path(self, audio_path: str):
+        cache_root = os.path.join(getCacheDir(), self.name)
+        try:
+            return os.path.relpath(audio_path, cache_root).replace("\\", "/")
+        except Exception:
+            return None
+
+    def _has_cache_index_entry_for_file(self, audio_path: str) -> bool:
+        cache_root = os.path.join(getCacheDir(), self.name)
+        key = self._get_cache_index_key_for_audio_path(audio_path)
+        if not key:
+            return False
+        index = self._load_cache_index(cache_root)
+        return isinstance(index.get(key), dict)
+
+    def _update_cache_index_for_file(self, audio_path: str, meta: dict):
+        """
+        Update index.json entry for given audio file (by relative path under cache dir).
+        """
+        if not isinstance(meta, dict):
+            return
+        cache_root = os.path.join(getCacheDir(), self.name)
+        key = self._get_cache_index_key_for_audio_path(audio_path)
+        if not key:
+            return
+        index = self._load_cache_index(cache_root)
+        index[key] = meta
+        self._save_cache_index(cache_root, index)
+
+    def _delete_cache_index_for_file(self, audio_path: str):
+        """
+        Remove entry from index.json for given audio file.
+        """
+        cache_root = os.path.join(getCacheDir(), self.name)
+        key = self._get_cache_index_key_for_audio_path(audio_path)
+        if not key:
+            return
+        index = self._load_cache_index(cache_root)
+        if key in index:
+            index.pop(key, None)
+            self._save_cache_index(cache_root, index)
+
+    def _read_cache_meta_for_audio_file(self, audio_path: str):
+        """
+        Read metadata for an audio file.
+        Возвращает dict или None (если записи в index.json нет).
+        """
+        cache_root = os.path.join(getCacheDir(), self.name)
+        try:
+            rel = os.path.relpath(audio_path, cache_root).replace("\\", "/")
+            index = self._load_cache_index(cache_root)
+            data = index.get(rel)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        return None
+
     def clear_voice_cache(self):
         """Clear all cached files for this module (recursive)."""
         cache_dir = os.path.join(getCacheDir(), self.name)
@@ -290,6 +483,63 @@ class YandexSpeechKit(BasePlugin):
                         pass
             self.logger.info(f"Cleared {deleted_count} cached files")
         return deleted_count
+
+    def _get_cache_file_path(self, filename: str):
+        """
+        Resolve a cache filename safely inside this module cache directory.
+        Returns absolute path or None if path is invalid or outside cache dir.
+        """
+        if not filename:
+            return None
+        cache_dir = os.path.join(getCacheDir(), self.name)
+        # Normalise and prevent directory traversal
+        safe_name = os.path.normpath(filename).lstrip("\\/")  # remove leading separators
+        full_path = os.path.normpath(os.path.join(cache_dir, safe_name))
+        if not full_path.startswith(os.path.normpath(cache_dir)):
+            return None
+        if not os.path.exists(full_path) or not os.path.isfile(full_path):
+            return None
+        return full_path
+
+    def get_cached_audio_meta(self, filename: str):
+        """
+        Get metadata for cached audio by its relative filename (mp3).
+        Returns dict or None.
+        """
+        audio_path = self._get_cache_file_path(filename)
+        if not audio_path:
+            return None
+        return self._read_cache_meta_for_audio_file(audio_path)
+
+    def get_cached_audio_base64(self, filename: str):
+        """
+        Read cached audio file and return base64-encoded content.
+        Returns None if file does not exist.
+        """
+        full_path = self._get_cache_file_path(filename)
+        if not full_path:
+            return None
+        with open(full_path, "rb") as f:
+            data = f.read()
+        if not data:
+            return None
+        return base64.b64encode(data).decode("utf-8")
+
+    def delete_voice_cache_file(self, filename: str) -> bool:
+        """
+        Delete single cached file. Returns True if file was deleted.
+        """
+        full_path = self._get_cache_file_path(filename)
+        if not full_path:
+            return False
+        try:
+            os.remove(full_path)
+            # удалить запись из общего индекса
+            self._delete_cache_index_for_file(full_path)
+            return True
+        except OSError as e:
+            self.logger.error("Failed to delete cache file %s: %s", filename, e)
+            return False
 
     def _get_level_interval(self, level):
         """
@@ -354,6 +604,19 @@ class YandexSpeechKit(BasePlugin):
             except OSError:
                 pass
             cached_file_name = None
+        # Если файл уже есть в кэше, но записи в index.json нет — добавим её
+        if cached_file_name and os.path.getsize(cached_file_name):
+            try:
+                if not self._has_cache_index_entry_for_file(cached_file_name):
+                    meta = {
+                        "text": message,
+                        "speaker": speaker,
+                        "emotion": emotion,
+                        "volume": volume,
+                    }
+                    self._update_cache_index_for_file(cached_file_name, meta)
+            except Exception:
+                pass
         if not cached_file_name:
             try:
                 audio_content = b"".join(self.synthesize(message, speaker, emotion, volume))
@@ -364,6 +627,17 @@ class YandexSpeechKit(BasePlugin):
                     os.makedirs(os.path.dirname(file_path), exist_ok=True)
                     with open(file_path, "wb") as f:
                         f.write(audio_content)
+                    # Обновляем общий индекс метаданных (best-effort)
+                    try:
+                        meta = {
+                            "text": message,
+                            "speaker": speaker,
+                            "emotion": emotion,
+                            "volume": volume,
+                        }
+                        self._update_cache_index_for_file(file_path, meta)
+                    except Exception:
+                        pass
                     self.logger.debug("Файл успешно сохранен {}.".format(file_path))
             except Exception as e:
                 self.logger.exception(f"{type(e).__name__}, {e}")
@@ -371,3 +645,72 @@ class YandexSpeechKit(BasePlugin):
         cached_file_name = findInCache(file_name, self.name, True)
         if cached_file_name and os.path.getsize(cached_file_name):
             playSound(cached_file_name, level)
+
+    def add_phrase_to_cache(self, message: str, args: dict | None = None):
+        """
+        Synthesize text to speech and save to cache without playback.
+        Uses same cache key logic as say().
+        """
+        args = args if isinstance(args, dict) else {}
+        speaker = args.get("voice") or args.get("speaker") or self.config.get("speaker", "marina")
+        emotion = args.get("emotion") or self.config.get("emotion", "neutral")
+        volume = args.get("volume")
+        if volume is None:
+            volume = self.config.get("default_volume")
+
+        voice_overridden = "voice" in args or "speaker" in args
+        emotion_overridden = "emotion" in args
+        volume_overridden = volume is not None
+
+        parts = [message, speaker, emotion]
+        if volume_overridden:
+            parts.append(str(volume))
+        if voice_overridden or emotion_overridden or volume_overridden:
+            cache_key = hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()
+        else:
+            cache_key = hashlib.md5(message.encode("utf-8")).hexdigest()
+        file_name = cache_key + ".mp3"
+
+        cached_file_name = findInCache(file_name, self.name, True)
+        if cached_file_name and os.path.getsize(cached_file_name) == 0:
+            try:
+                os.remove(cached_file_name)
+            except OSError:
+                pass
+            cached_file_name = None
+        # Если файл уже есть в кэше, но записи в index.json нет — добавим её
+        if cached_file_name and os.path.getsize(cached_file_name):
+            try:
+                if not self._has_cache_index_entry_for_file(cached_file_name):
+                    meta = {
+                        "text": message,
+                        "speaker": speaker,
+                        "emotion": emotion,
+                        "volume": volume,
+                    }
+                    self._update_cache_index_for_file(cached_file_name, meta)
+            except Exception:
+                pass
+        if not cached_file_name:
+            try:
+                audio_content = b"".join(self.synthesize(message, speaker, emotion, volume))
+                if not audio_content:
+                    self.logger.warning("API returned empty audio for: %s", message[:50])
+                else:
+                    file_path = getFullFilename(file_name, self.name, True)
+                    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                    with open(file_path, "wb") as f:
+                        f.write(audio_content)
+                    try:
+                        meta = {
+                            "text": message,
+                            "speaker": speaker,
+                            "emotion": emotion,
+                            "volume": volume,
+                        }
+                        self._update_cache_index_for_file(file_path, meta)
+                    except Exception:
+                        pass
+                    self.logger.debug("Фраза добавлена в кэш {}.".format(file_path))
+            except Exception as e:
+                self.logger.exception(f"{type(e).__name__}, {e}")
