@@ -3,8 +3,47 @@
 <li class="breadcrumb-item"><a href="YandexSpeechKit">{{ _('Yandex SpeechKit') }}</a></li>
 {% endblock %}
 {% block module %}
+<style>
+    .ysk-cache-table-wrapper {
+        overflow-x: visible;
+    }
+    .ysk-cache-table {
+        table-layout: fixed;
+        width: 100%;
+    }
+    .ysk-cache-table th:nth-child(1),
+    .ysk-cache-table td:nth-child(1) {
+        width: 18%;
+        max-width: 18%;
+    }
+    /* Основная ширина у текста, чтобы таблица не растягивалась пустыми колонками */
+    .ysk-cache-table th:nth-child(2),
+    .ysk-cache-table td:nth-child(2) {
+        width: auto;
+    }
+    /* Размер и дата прижаты друг к другу и занимают минимум места */
+    .ysk-cache-table th:nth-child(3),
+    .ysk-cache-table td:nth-child(3) {
+        width: 90px;
+        max-width: 90px;
+        white-space: nowrap;
+    }
+    .ysk-cache-table th:nth-child(4),
+    .ysk-cache-table td:nth-child(4) {
+        width: 160px;
+        max-width: 160px;
+        white-space: nowrap;
+    }
+    /* Для кнопок даем фиксированную ширину, чтобы дата не налезала */
+    .ysk-cache-table th:nth-child(5),
+    .ysk-cache-table td:nth-child(5) {
+        width: 120px;
+        max-width: 120px;
+        white-space: nowrap;
+    }
+</style>
 <div class="row justify-content-center">
-    <div class="col-12 col-lg-10 col-xl-9">
+    <div class="col-12 col-xl-12 col-xxl-10">
         <ul class="nav nav-tabs mb-3" id="yskTabs" role="tablist">
             <li class="nav-item">
                 <a class="nav-link active" id="ysk_settings_tab" data-bs-toggle="tab" href="#ysk_settings" role="tab" aria-controls="ysk_settings" aria-selected="true">
@@ -182,15 +221,15 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="table-responsive">
-                            <table class="table table-sm table-hover align-middle mb-0">
+                        <div class="table-responsive ysk-cache-table-wrapper">
+                            <table class="table table-sm table-hover align-middle mb-0 w-100 ysk-cache-table">
                                 <thead>
                                     <tr>
-                                        <th style="width: 25%">{{ _('Phrase ID (hash)') }}</th>
-                                        <th style="width: 35%">{{ _('Text') }}</th>
-                                        <th style="width: 10%">{{ _('Size') }}</th>
-                                        <th style="width: 15%">{{ _('Updated') }}</th>
-                                        <th style="width: 15%">{{ _('Actions') }}</th>
+                                        <th class="text-nowrap">{{ _('Phrase ID (hash)') }}</th>
+                                        <th class="text-truncate">{{ _('Text') }}</th>
+                                        <th class="text-nowrap">{{ _('Size') }}</th>
+                                        <th class="text-nowrap">{{ _('Updated') }}</th>
+                                        <th class="text-nowrap">{{ _('Actions') }}</th>
                                     </tr>
                                 </thead>
                                 <tbody id="ysk_cache_table_body">
@@ -587,6 +626,11 @@ document.addEventListener('DOMContentLoaded', function() {
         return d.toLocaleString();
     }
 
+    function isTextTruncated(el) {
+        if (!el) return false;
+        return el.scrollWidth > el.clientWidth + 1;
+    }
+
     function renderCacheTable(items) {
         if (!cacheTableBody) return;
         cacheTableBody.innerHTML = '';
@@ -602,21 +646,37 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         items.forEach(item => {
             const tr = document.createElement('tr');
+
+            // ID: только имя файла без путей и расширения, обрезаем с троеточием
             const nameTd = document.createElement('td');
             nameTd.className = 'font-monospace text-truncate';
-            nameTd.title = item.filename || '';
-            nameTd.textContent = item.filename || '';
+            const fullPath = item.filename || '';
+            const pathParts = fullPath.split('/').pop().split('\\').pop();
+            const dotIndex = pathParts.lastIndexOf('.');
+            const baseName = dotIndex > 0 ? pathParts.slice(0, dotIndex) : pathParts;
+            const displayId = baseName || fullPath;
+            nameTd.title = fullPath || baseName;
+            nameTd.textContent = displayId;
+            nameTd.style.overflow = 'hidden';
+            nameTd.style.textOverflow = 'ellipsis';
+            nameTd.style.whiteSpace = 'nowrap';
 
+            // Текст фразы занимает отведённую ширину, при переполнении обрезается с троеточием
             const textTd = document.createElement('td');
             const textVal = (item.text && String(item.text).trim()) ? String(item.text) : YSK_I18N.unknownText;
             textTd.className = 'text-truncate';
-            textTd.title = textVal;
+            textTd.style.overflow = 'hidden';
+            textTd.style.textOverflow = 'ellipsis';
+            textTd.style.whiteSpace = 'nowrap';
+            textTd.style.overflowWrap = 'anywhere';
             textTd.textContent = textVal;
 
             const sizeTd = document.createElement('td');
+            sizeTd.className = 'text-nowrap w-auto';
             sizeTd.textContent = formatBytes(item.size || 0);
 
             const mtimeTd = document.createElement('td');
+            mtimeTd.className = 'text-nowrap';
             mtimeTd.textContent = formatDateSeconds(item.mtime || 0);
 
             const actionsTd = document.createElement('td');
@@ -624,20 +684,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const playBtn = document.createElement('button');
             playBtn.type = 'button';
-            playBtn.className = 'btn btn-sm btn-outline-primary me-1';
-            playBtn.innerHTML = '<i class="fas fa-play me-1"></i>' + YSK_I18N.play;
+            playBtn.className = 'btn btn-sm btn-outline-primary me-1 px-2';
+            playBtn.innerHTML = '<i class="fas fa-play"></i>';
             playBtn.addEventListener('click', () => playCacheItem(item.filename));
 
             const dlBtn = document.createElement('button');
             dlBtn.type = 'button';
-            dlBtn.className = 'btn btn-sm btn-outline-secondary me-1';
-            dlBtn.innerHTML = '<i class="fas fa-download me-1"></i>' + YSK_I18N.download;
+            dlBtn.className = 'btn btn-sm btn-outline-secondary me-1 px-2';
+            dlBtn.innerHTML = '<i class="fas fa-download"></i>';
             dlBtn.addEventListener('click', () => downloadCacheItem(item.filename));
 
             const delBtn = document.createElement('button');
             delBtn.type = 'button';
-            delBtn.className = 'btn btn-sm btn-outline-danger';
-            delBtn.innerHTML = '<i class="fas fa-trash me-1"></i>' + YSK_I18N.delete;
+            delBtn.className = 'btn btn-sm btn-outline-danger px-2';
+            delBtn.innerHTML = '<i class="fas fa-trash"></i>';
             delBtn.addEventListener('click', () => deleteCacheItem(item.filename));
 
             actionsTd.appendChild(playBtn);
@@ -650,6 +710,15 @@ document.addEventListener('DOMContentLoaded', function() {
             tr.appendChild(mtimeTd);
             tr.appendChild(actionsTd);
             cacheTableBody.appendChild(tr);
+
+            // Всплывающая подсказка только если текст реально обрезан
+            setTimeout(() => {
+                if (isTextTruncated(textTd)) {
+                    textTd.title = textVal;
+                } else {
+                    textTd.removeAttribute('title');
+                }
+            }, 0);
         });
     }
 
